@@ -1,8 +1,9 @@
 import { Button, Rows, Text } from "@canva/app-ui-kit";
 import { requestOpenExternalUrl } from "@canva/platform";
-import { FormattedMessage, useIntl } from "react-intl";
+import { useIntl } from "react-intl";
 import * as styles from "styles/components.css";
 import { useAddElement } from "utils/use_add_element";
+import React from "react";
 
 export const DOCS_URL = "https://www.canva.dev/docs/apps/";
 
@@ -27,21 +28,33 @@ export const App = () => {
 
   const intl = useIntl();
 
+  const [messages, setMessages] = React.useState([
+    { user: "hello", system: "world" },
+    { user: "hello", system: "world" },
+    { user: "hello", system: "world" },
+  ]);
+
   return (
     <div className={styles.scrollContainer}>
-      <Rows spacing="2u">
-        <Text>
-          <FormattedMessage
-            defaultMessage="
-              To make changes to this app, edit the <code>src/app.tsx</code> file,
-              then close and reopen the app in the editor to preview the changes.
-            "
-            description="Instructions for how to make changes to the app. Do not translate <code>src/app.tsx</code>."
-            values={{
-              code: (chunks) => <code>{chunks}</code>,
+      <div className={styles.messageHistory}>
+        {messages.map((message, index) => (
+          <p
+            key={index}
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "0.5rem",
+              borderBottom: "1px solid #ddd",
             }}
-          />
-        </Text>
+          >
+            <span className={styles.system}>{message.system}</span>
+            <span className={styles.user}>{message.user}</span>
+          </p>
+        ))}
+      </div>
+      <Rows spacing="2u">
         <Button variant="primary" onClick={onClick} stretch>
           {intl.formatMessage({
             defaultMessage: "Do something cool",
