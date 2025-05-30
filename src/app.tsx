@@ -6,6 +6,9 @@ import { addElementAtPoint, getCurrentPageContext } from "@canva/design";
 import React, { useState } from "react";
 import { nanoid } from "nanoid";
 import { upload } from "@canva/asset";
+import axios from "axios";
+import * as path from "path";
+import { get } from "http";
 
 interface Message {
   role: "user" | "assistant";
@@ -21,6 +24,7 @@ export const App = () => {
   const [input, setInput] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [sessionId, setSessionId] = useState<string>(nanoid());
+  const [debug, setDebug] = useState("");
 
   const sendMessage = async () => {
     if (!input.trim()) return;
@@ -59,30 +63,37 @@ export const App = () => {
       sendMessage();
     }
   };
+  async function getImageFileType(imageUrl: string): Promise<string | null> {
+    const response = await axios.get(imageUrl);
+    const contentType = response.headers["content-type"];
 
+    return contentType;
+  }
   async function uploadImage(img_url) {
     const res = await upload({
       type: "image",
       url: img_url,
-      mimeType: "image/jpeg",
+      mimeType: await getImageFileType(img_url),
       thumbnailUrl: img_url,
       aiDisclosure: "none",
     });
     await res.whenUploaded();
     return res.ref;
   }
+
   async function handleClick() {
     // Upload an image
+    setDebug(String(await getCurrentPageContext()));
+    const currentDimensions = await getCurrentPageContext();
     const response = await fetch("http://127.0.0.1:5000/canvarequest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         user_input: input,
-        page_dimensions: getCurrentPageContext(),
+        page_dimensions: currentDimensions,
       }),
     });
     const data = await response.json();
-    alert(data);
     // eslint-disable-next-line @typescript-eslint/prefer-for-of
     for (let i = 0; i < data.length; i++) {
       const data_json = data[i];
@@ -171,10 +182,11 @@ export const App = () => {
 
         <Button variant="tertiary" onClick={handleClick}>
           {intl.formatMessage({
-            defaultMessage: "Add 'Hello World' Text",
+            defaultMessage: "Send to AI",
             description: "Adds a sample text element to the design",
           })}
         </Button>
+        <p>{debug}</p>
       </Rows>
     </div>
   );
