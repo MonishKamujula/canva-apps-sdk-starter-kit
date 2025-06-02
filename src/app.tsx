@@ -1,14 +1,24 @@
-import { Button, Rows, TextInput } from "@canva/app-ui-kit";
+import {
+  Box,
+  Rows,
+  FormField,
+  TextInput,
+  Button,
+  Scrollable,
+} from "@canva/app-ui-kit";
 import { useIntl } from "react-intl";
 import * as styles from "styles/components.css";
-import { useAddElement } from "utils/use_add_element";
-import { addElementAtPoint, getCurrentPageContext } from "@canva/design";
+import {
+  addElementAtPoint,
+  getCurrentPageContext,
+  addPage,
+} from "@canva/design";
+import { openDesign } from "@canva/design";
 import React, { useState } from "react";
 import { nanoid } from "nanoid";
 import { upload } from "@canva/asset";
 import axios from "axios";
-import * as path from "path";
-import { get } from "http";
+import CardEditor from "./components/cardEditor";
 
 interface Message {
   role: "user" | "assistant";
@@ -19,7 +29,6 @@ export const DOCS_URL = "https://www.canva.dev/docs/apps/";
 
 export const App = () => {
   const intl = useIntl();
-  const addElement = useAddElement();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
@@ -80,17 +89,42 @@ export const App = () => {
     await res.whenUploaded();
     return res.ref;
   }
+  const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
   async function handleClick() {
     // Upload an image
-    setDebug(String(await getCurrentPageContext()));
+    // addPage();
+
     const currentDimensions = await getCurrentPageContext();
+    let currentPage = null;
+    await openDesign({ type: "current_page" }, async (draft) => {
+      // eslint-disable-next-line no-console
+      console.log("Page: ", draft.page);
+
+      if (draft.page === undefined) {
+        currentPage = "NULL";
+      }
+      currentPage = draft.page;
+    });
+    let openDesignTimeout = 0;
+    while (currentPage === null) {
+      if (openDesignTimeout > 10) {
+        openDesignTimeout = 0;
+        break;
+      } else {
+        openDesignTimeout++;
+        await delay(1000);
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log("Final Current Page", currentPage);
     const response = await fetch("http://127.0.0.1:5000/canvarequest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        user_input: input,
         page_dimensions: currentDimensions,
+        current_page: currentPage,
+        user_input: input,
       }),
     });
     const data = await response.json();
@@ -102,92 +136,30 @@ export const App = () => {
       }
       await addElementAtPoint(data_json);
     }
-
-    // const imageUrl =
-    //   "https://images.pexels.com/photos/32248966/pexels-photo-32248966.jpeg";
-    // const mimeType = "image/jpeg";
-    // const thumbnailUrl = imageUrl;
-
-    // const { ref, whenUploaded } = await upload({
-    //   type: "image",
-    //   url: imageUrl,
-    //   mimeType,
-    //   thumbnailUrl,
-    //   aiDisclosure: "none",
-    // });
-
-    // await whenUploaded();
-
-    // await addElementAtPoint({
-    //   type: "image",
-    //   top: 0,
-    //   left: 0,
-    //   width: 200,
-    //   height: 150,
-    //   altText: {
-    //     text: "hello world",
-    //     decorative: false,
-    //   },
-    //   ref,
-    // });
   }
 
-  return (
-    <div className={styles.scrollContainer}>
-      <div className={styles.messageHistory}>
-        {messages.map((msg, index) => (
-          <div
-            key={index}
-            style={{
-              display: "flex",
-              justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-              padding: "0.5rem",
-            }}
-          >
-            <div
-              style={{
-                background: msg.role === "user" ? "#007bff" : "#f0f0f0",
-                color: msg.role === "user" ? "#fff" : "#000",
-                borderRadius: "12px",
-                padding: "10px",
-                maxWidth: "75%",
-                wordBreak: "break-word",
-              }}
-            >
-              <code style={{ whiteSpace: "pre-wrap" }}>{msg.content}</code>
-            </div>
-          </div>
-        ))}
-        {loading && (
-          <p style={{ textAlign: "center", color: "#888" }}>⏳ Thinking...</p>
-        )}
-      </div>
+  const cards_list = [
+    {
+      title: "Topic 1",
+      description: "Description 1",
+    },
+    {
+      title: "Title 2",
+      description: "Description 2",
+    },
+    {
+      title: "Title 3",
+      description: "Description 3",
+    },
+    {
+      title: "Title 4",
+      description: "Description 4",
+    },
+    {
+      title: "Title 5",
+      description: "Description 5",
+    },
+  ];
 
-      <Rows spacing="2u">
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <TextInput
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask something..."
-          />
-          <Button variant="primary" onClick={sendMessage}>
-            {intl.formatMessage({
-              defaultMessage: "Send",
-              description: "Chat send button",
-            })}
-          </Button>
-        </div>
-
-        <Button variant="tertiary" onClick={handleClick}>
-          {intl.formatMessage({
-            defaultMessage: "Send to AI",
-            description: "Adds a sample text element to the design",
-          })}
-        </Button>
-        <p>{debug}</p>
-      </Rows>
-    </div>
-  );
+  return <CardEditor cards={cards_list} />;
 };
