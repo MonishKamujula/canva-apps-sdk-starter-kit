@@ -9,13 +9,12 @@ import {
   HorizontalCard,
 } from "@canva/app-ui-kit";
 import {
-  addElementAtPoint,
   getCurrentPageContext,
   addPage,
 } from "@canva/design";
+import type { ElementAtPoint } from "@canva/design";
 import { Card, CardEditorProps, CardItemProps } from "../types";
-import { uploadImage, delay } from "../utils/canva";
-import { generatePresentation } from "../utils/api";
+import { streamCardElements } from "../utils/websocket";
 
 /** Default thumbnail icon for edit mode */
 const EDIT_THUMBNAIL_URL = "https://icons.veryicon.com/png/o/miscellaneous/linear-small-icon/edit-246.png";
@@ -79,12 +78,16 @@ function CardItem({ card, idx, setAllCards }: CardItemProps) {
 }
 
 /**
- * Card Editor component for managing and generating presentation slides
+ * Card Editor component for managing and generating presentation slides.
+ *
+ * Uses WebSocket streaming to receive elements in real-time, then
+ * addPage() to atomically create each slide (page-switch safe).
  */
 export default function CardEditor({ cards, setCards }: CardEditorProps) {
   const [localCards, setLocalCards] = useState<Card[]>([...cards]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
 
   // Sync with parent when cards prop changes
   useEffect(() => {
@@ -92,28 +95,7 @@ export default function CardEditor({ cards, setCards }: CardEditorProps) {
   }, [cards]);
 
   /**
-   * Adds a single card as a new page in the Canva design
-   */
-  async function addCardToDesign(card: Card): Promise<void> {
-    const currentDimensions = await getCurrentPageContext();
-    const elements = await generatePresentation(card, currentDimensions);
-
-    for (const element of elements) {
-      console.log("Processing element:", element);
-      // Upload images if needed
-      if (element.type === "image" && element.ref) {
-        console.log("Uploading image:", element.ref);
-        const newRef = await uploadImage(element.ref);
-        console.log("Upload complete, new ref:", newRef);
-        element.ref = newRef;
-      }
-      console.log("Adding element to point:", element);
-      await addElementAtPoint(element as Parameters<typeof addElementAtPoint>[0]);
-    }
-  }
-
-  /**
-   * Generates all slides from the cards
+   * Generates all slides from the cards using WebSocket streaming + addPage()
    */
   async function handleConfirm(): Promise<void> {
     if (localCards.length === 0) {
@@ -124,26 +106,59 @@ export default function CardEditor({ cards, setCards }: CardEditorProps) {
     try {
       setIsGenerating(true);
       setError(null);
+      setProgress("Starting generation...");
 
       // Sync local cards to parent state
       setCards(localCards);
 
-      // Generate each card as a page
-      for (let i = 0; i < localCards.length; i++) {
-        await addCardToDesign(localCards[i]);
-        console.log(`Page ${i + 1} completed`);
+      // Get page dimensions once (used for all cards)
+      const pageContext = await getCurrentPageContext();
 
-        // Add new page for subsequent cards
-        if (i < localCards.length - 1) {
-          await addPage();
-          await delay(2000);
-        }
+      if (!pageContext.dimensions) {
+        setError("This design type does not have fixed dimensions (e.g. Whiteboard or Doc). Please use a presentation design.");
+        return;
       }
+
+      const pageDimensions = { dimensions: pageContext.dimensions };
+
+      for (let i = 0; i < localCards.length; i++) {
+        const card = localCards[i];
+        setProgress(`Slide ${i + 1}/${localCards.length}: Connecting...`);
+
+        // 1. Stream + buffer elements from WebSocket
+        const elements = await streamCardElements(
+          card,
+          pageDimensions,
+          (elementCount, status) => {
+            setProgress(
+              `Slide ${i + 1}/${localCards.length}: ${status} (${elementCount} elements)`
+            );
+          }
+        );
+
+        // 2. Atomically create page with all elements (page-switch safe!)
+        setProgress(`Slide ${i + 1}/${localCards.length}: Adding to design...`);
+        console.log(`Creating page ${i + 1} with ${elements.length} elements`);
+
+        await addPage({
+          elements: elements as ElementAtPoint[],
+          title: card.title,
+        });
+
+        console.log(`Page ${i + 1} completed`);
+      }
+
+      setProgress(null);
     } catch (err) {
       console.error("Failed to generate presentation:", err);
-      setError("Failed to generate presentation. Please try again.");
+      setError(
+        err instanceof Error
+          ? `Generation failed: ${err.message}`
+          : "Failed to generate presentation. Please try again."
+      );
     } finally {
       setIsGenerating(false);
+      setProgress(null);
     }
   }
 
@@ -165,6 +180,12 @@ export default function CardEditor({ cards, setCards }: CardEditorProps) {
       {error && (
         <Box padding="1u" borderRadius="standard">
           <Text tone="critical">{error}</Text>
+        </Box>
+      )}
+
+      {progress && (
+        <Box padding="1u" borderRadius="standard">
+          <Text>{progress}</Text>
         </Box>
       )}
 
