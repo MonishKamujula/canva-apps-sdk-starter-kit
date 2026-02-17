@@ -11,9 +11,10 @@ import {
 import {
   getCurrentPageContext,
   addPage,
+  // @ts-ignore
+  openDesign, 
 } from "@canva/design";
-import type { ElementAtPoint } from "@canva/design";
-import { Card, CardEditorProps, CardItemProps } from "../types";
+import { Card, CardEditorProps, CardItemProps, CanvaElement, DesignSession, PageRef, StreamProgress } from "../types";
 import { streamCardElements } from "../utils/websocket";
 
 /** Default thumbnail icon for edit mode */
@@ -80,14 +81,19 @@ function CardItem({ card, idx, setAllCards }: CardItemProps) {
 /**
  * Card Editor component for managing and generating presentation slides.
  *
- * Uses WebSocket streaming to receive elements in real-time, then
- * addPage() to atomically create each slide (page-switch safe).
+ * Uses `openDesign` with `all_pages` context to stream elements to specific pages.
+ * 
+ * Strategy:
+ * 1. Create blank pages for all cards upfront using `addPage`.
+ * 2. Open a design session to target these pages.
+ * 3. Stream elements to each page sequentially, syncing after each element.
  */
 export default function CardEditor({ cards, setCards }: CardEditorProps) {
   const [localCards, setLocalCards] = useState<Card[]>([...cards]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
+  const [streamProgress, setStreamProgress] = useState<StreamProgress | null>(null);
 
   // Sync with parent when cards prop changes
   useEffect(() => {
@@ -95,7 +101,7 @@ export default function CardEditor({ cards, setCards }: CardEditorProps) {
   }, [cards]);
 
   /**
-   * Generates all slides from the cards using WebSocket streaming + addPage()
+   * Generates all slides and streams content
    */
   async function handleConfirm(): Promise<void> {
     if (localCards.length === 0) {
@@ -106,59 +112,100 @@ export default function CardEditor({ cards, setCards }: CardEditorProps) {
     try {
       setIsGenerating(true);
       setError(null);
-      setProgress("Starting generation...");
+      setProgress("Preparing design...");
+      setStreamProgress(null);
 
-      // Sync local cards to parent state
       setCards(localCards);
 
-      // Get page dimensions once (used for all cards)
+      // Get page dimensions once
       const pageContext = await getCurrentPageContext();
-
       if (!pageContext.dimensions) {
         setError("This design type does not have fixed dimensions (e.g. Whiteboard or Doc). Please use a presentation design.");
         return;
       }
-
       const pageDimensions = { dimensions: pageContext.dimensions };
 
-      for (let i = 0; i < localCards.length; i++) {
-        const card = localCards[i];
-        setProgress(`Slide ${i + 1}/${localCards.length}: Connecting...`);
+      await openDesign({ type: "all_pages" }, async (session) => {
+        const pages = session.pageRefs.toArray();
 
-        // 1. Stream + buffer elements from WebSocket
-        const elements = await streamCardElements(
-          card,
-          pageDimensions,
-          (elementCount, status) => {
-            setProgress(
-              `Slide ${i + 1}/${localCards.length}: ${status} (${elementCount} elements)`
+        for (let i = 0; i < localCards.length; i++) {
+          const card = localCards[i];
+
+          // Reuse existing page if available
+          if (i < pages.length) {
+            setProgress(`Updating existing page ${i + 1}/${localCards.length}...`);
+            await session.helpers.openPage(pages[i], async (pageResult) => {
+              // 1. Sync Title
+              pageResult.page.title = card.title;
+
+              // 2. Stream Elements (using page-specific addElement)
+              await streamCardElements(
+                card,
+                pageDimensions,
+                {
+                  onElement: async (element: CanvaElement) => {
+                    await pageResult.page.addElement(element);
+                    await session.sync();
+                  },
+                  onProgress: (count, status) => {
+                    setStreamProgress({
+                      cardIndex: i,
+                      totalCards: localCards.length,
+                      elementCount: count,
+                      status: status as any,
+                    });
+                  },
+                  onError: (msg) => {
+                    setStreamProgress((prev) =>
+                      prev ? { ...prev, status: "error", message: msg } : null
+                    );
+                    setError(`Error on slide ${i + 1}: ${msg}`);
+                  },
+                }
+              );
+            });
+          } else {
+            // Create new page if needed (exceeds existing count)
+            setProgress(`Creating new page ${i + 1}/${localCards.length}...`);
+            await addPage({
+              title: card.title,
+            });
+
+            // Stream Elements (using global addElementAtPoint for active page)
+            await streamCardElements(
+              card,
+              pageDimensions,
+              {
+                onElement: async (element: CanvaElement) => {
+                  await addElementAtPoint(element as ElementAtPoint);
+                },
+                onProgress: (count, status) => {
+                  setStreamProgress({
+                    cardIndex: i,
+                    totalCards: localCards.length,
+                    elementCount: count,
+                    status: status as any,
+                  });
+                },
+                onError: (msg) => {
+                  setStreamProgress((prev) =>
+                    prev ? { ...prev, status: "error", message: msg } : null
+                  );
+                  setError(`Error on slide ${i + 1}: ${msg}`);
+                },
+              }
             );
           }
-        );
+        }
+      });
+      setProgress("Generation complete!");
 
-        // 2. Atomically create page with all elements (page-switch safe!)
-        setProgress(`Slide ${i + 1}/${localCards.length}: Adding to design...`);
-        console.log(`Creating page ${i + 1} with ${elements.length} elements`);
-
-        await addPage({
-          elements: elements as ElementAtPoint[],
-          title: card.title,
-        });
-
-        console.log(`Page ${i + 1} completed`);
-      }
-
-      setProgress(null);
     } catch (err) {
-      console.error("Failed to generate presentation:", err);
-      setError(
-        err instanceof Error
-          ? `Generation failed: ${err.message}`
-          : "Failed to generate presentation. Please try again."
-      );
+      console.error("Failed to generate:", err);
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setIsGenerating(false);
-      setProgress(null);
+      setTimeout(() => setProgress(null), 3000);
     }
   }
 

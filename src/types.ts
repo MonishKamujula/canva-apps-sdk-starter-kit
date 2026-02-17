@@ -112,3 +112,39 @@ export interface StreamProgress {
     | "error";
   message?: string;
 }
+
+// ─── openDesign Types (Manual Definition) ─────
+
+export interface PageRef {
+  type: string;
+  locked: boolean;
+  [key: string]: any;
+}
+
+export interface PageResult {
+  page: {
+    title: string;
+    elements: {
+      toArray(): any[];
+    };
+    /**
+     * Adds an element to the page.
+     * @param element The element to add.
+     */
+    addElement(element: any): Promise<void>;
+  };
+}
+
+export interface DesignSession {
+  pageRefs: {
+    filter(fn: (p: PageRef) => boolean): { toArray(): PageRef[] };
+    toArray(): PageRef[];
+  };
+  helpers: {
+    openPage(ref: PageRef, cb: (res: PageResult) => Promise<void>): Promise<void>;
+  };
+  sync(): Promise<void>;
+}
+
+// Declare openDesign as a global if needed, but we rely on import casting
+
